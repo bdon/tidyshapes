@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unicodedata
 import urllib.request
+from collections import defaultdict
 from pathlib import Path
 
 import duckdb
@@ -74,21 +75,89 @@ def slugify(text: str) -> str:
     return re.sub(r"-+", "-", text).strip("-")
 
 
-def load_areas_with_wikidata(
+SUBTYPE_LABELS = {
+    "locality": "city",
+    "region": "state",
+    "country": "country",
+    "county": "county",
+    "dependency": "dependency",
+    "localadmin": "localadmin",
+    "neighborhood": "neighborhood",
+    "macrohood": "macrohood",
+    "microhood": "microhood",
+}
+
+
+def load_areas(
     conn: duckdb.DuckDBPyConnection, division_path: Path, area_path: Path
-) -> list[tuple[str, str, bytes]]:
-    """Join division_area with division to get (wikidata, english_name, geometry_wkb)."""
+) -> list[tuple]:
+    """Join division_area with division and parent to get metadata for disambiguation."""
     rows = conn.execute(
         f"""
-        SELECT d.wikidata, COALESCE(d.names.common['en'][1], d.names."primary") AS en_name,
-               a.geometry
+        SELECT d.wikidata, d.subtype,
+               COALESCE(d.names.common['en'], d.names."primary") AS en_name,
+               COALESCE(p.names.common['en'], p.names."primary") AS parent_name,
+               a.geometry, octet_length(a.geometry) AS geom_size
         FROM read_parquet('{area_path}') a
         JOIN read_parquet('{division_path}') d ON a.division_id = d.id
+        LEFT JOIN read_parquet('{division_path}') p ON d.parent_division_id = p.id
         WHERE d.wikidata IS NOT NULL
         """
     ).fetchall()
     print(f"  {len(rows):,} division areas with wikidata IDs")
     return rows
+
+
+def dedup_by_wikidata(rows, qrank, threshold):
+    """Keep only the largest geometry per wikidata ID, filtered by QRank."""
+    best = {}
+    for wikidata_id, subtype, en_name, parent_name, geom_wkb, geom_size in rows:
+        if qrank.get(wikidata_id, 0) < threshold:
+            continue
+        if wikidata_id not in best or geom_size > best[wikidata_id][5]:
+            best[wikidata_id] = (wikidata_id, subtype, en_name, parent_name, geom_wkb, geom_size)
+    print(f"  {len(best):,} unique entries after dedup and QRank filter")
+    return list(best.values())
+
+
+def resolve_collisions(entries):
+    """Assign unique slugs, disambiguating collisions by subtype then parent name."""
+    by_slug = defaultdict(list)
+    for e in entries:
+        slug = slugify(e[2])  # en_name
+        if slug:
+            by_slug[slug].append(e)
+
+    result = {}  # slug -> (wikidata_id, geom_wkb)
+    for base_slug, group in by_slug.items():
+        if len(group) == 1:
+            e = group[0]
+            result[base_slug] = (e[0], e[4])
+            continue
+
+        # Try disambiguating by subtype
+        subtypes = {e[1] for e in group}
+        if len(subtypes) == len(group):
+            for e in group:
+                label = SUBTYPE_LABELS.get(e[1], e[1])
+                result[f"{base_slug}-{label}"] = (e[0], e[4])
+            continue
+
+        # Same subtype or mixed — append parent name
+        attempted = {}
+        for e in group:
+            parent_slug = slugify(e[3]) if e[3] else ""
+            if parent_slug:
+                candidate = f"{base_slug}-{parent_slug}"
+            else:
+                candidate = f"{base_slug}-{e[0].lower()}"  # QID fallback
+            # If parent also collides, fall back to QID
+            if candidate in attempted or candidate in result:
+                candidate = f"{base_slug}-{e[0].lower()}"
+            attempted[candidate] = (e[0], e[4])
+        result.update(attempted)
+
+    return result
 
 
 def cmd_build(args):
@@ -105,23 +174,21 @@ def cmd_build(args):
     qrank = load_qrank(qrank_path)
 
     print("Joining division areas with divisions:")
-    rows = load_areas_with_wikidata(conn, division_path, area_path)
+    rows = load_areas(conn, division_path, area_path)
+
+    print("Deduplicating:")
+    entries = dedup_by_wikidata(rows, qrank, args.qrank_threshold)
+
+    print("Resolving name collisions:")
+    slug_map = resolve_collisions(entries)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
-    for wikidata_id, en_name, geom_wkb in rows:
-        score = qrank.get(wikidata_id, 0)
-        if score < args.qrank_threshold:
-            continue
-
+    for slug, (wikidata_id, geom_wkb) in slug_map.items():
         geom = shapely.from_wkb(geom_wkb)
         minx, miny, maxx, maxy = geom.bounds
-
-        slug = slugify(en_name)
-        if not slug:
-            continue
         bbox_path = output_dir / f"{slug}.bbox"
         bbox_path.write_text(f"{minx},{miny},{maxx},{maxy}\n")
         count += 1
