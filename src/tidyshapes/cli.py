@@ -3,6 +3,8 @@
 import argparse
 import gzip
 import re
+import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -86,20 +88,8 @@ def load_areas_with_wikidata(
     return rows
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Process Overture Maps division areas")
-    parser.add_argument(
-        "--release", default=RELEASE, help=f"Overture release tag (default: {RELEASE})"
-    )
-    parser.add_argument(
-        "--qrank-threshold",
-        type=int,
-        default=QRANK_THRESHOLD,
-        help=f"Minimum QRank score to include (default: {QRANK_THRESHOLD})",
-    )
-    parser.add_argument("-o", "--output-dir", default="output", help="Output directory")
-    args = parser.parse_args()
-
+def cmd_build(args):
+    """Run the build pipeline."""
     conn = duckdb.connect()
     conn.execute("INSTALL httpfs; LOAD httpfs; SET s3_region='us-west-2';")
 
@@ -132,6 +122,53 @@ def main():
         count += 1
 
     print(f"Wrote {count} .bbox files to {output_dir}/")
+
+
+def cmd_upload(args):
+    """Upload output files to R2."""
+    cmd = [
+        "aws", "s3", "sync",
+        args.output_dir,
+        f"s3://{args.bucket}/{args.version}/",
+        "--endpoint-url", args.endpoint_url,
+    ]
+    print(f"Running: {' '.join(cmd)}")
+    sys.exit(subprocess.call(cmd))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Process Overture Maps division areas")
+    subparsers = parser.add_subparsers(dest="command")
+
+    # build subcommand (default)
+    build_parser = subparsers.add_parser("build", help="Run the build pipeline")
+    build_parser.add_argument(
+        "--release", default=RELEASE, help=f"Overture release tag (default: {RELEASE})"
+    )
+    build_parser.add_argument(
+        "--qrank-threshold",
+        type=int,
+        default=QRANK_THRESHOLD,
+        help=f"Minimum QRank score to include (default: {QRANK_THRESHOLD})",
+    )
+    build_parser.add_argument("-o", "--output-dir", default="output", help="Output directory")
+
+    # upload subcommand
+    upload_parser = subparsers.add_parser("upload", help="Upload output files to R2")
+    upload_parser.add_argument("version", help="Version prefix (e.g. v0, v1)")
+    upload_parser.add_argument("--bucket", required=True, help="R2 bucket name")
+    upload_parser.add_argument("--endpoint-url", required=True, help="R2 S3-compatible endpoint")
+    upload_parser.add_argument("--output-dir", default="output", help="Output directory")
+
+    args = parser.parse_args()
+
+    if args.command == "upload":
+        cmd_upload(args)
+    else:
+        # Default to build (handles both `tidyshapes build` and bare `tidyshapes`)
+        if args.command is None:
+            args = build_parser.parse_args()
+        cmd_build(args)
 
 
 if __name__ == "__main__":

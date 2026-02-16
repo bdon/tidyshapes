@@ -67,6 +67,23 @@ For example, `united-states.bbox`:
 -179.174265,17.913769,-66.949895,71.352561
 ```
 
+## Upload to R2
+
+Upload the output files to a Cloudflare R2 bucket using the `upload` subcommand. Requires the [AWS CLI](https://aws.amazon.com/cli/) to be installed and configured with R2 credentials.
+
+```sh
+uv run tidyshapes upload v0 --bucket my-bucket --endpoint-url https://xxx.r2.cloudflarestorage.com
+```
+
+This runs `aws s3 sync` under the hood, so it handles parallel uploads, retries, and only transfers changed files.
+
+| Argument | Description |
+|---|---|
+| `version` | Version prefix in the bucket (e.g. `v0`, `v1`) |
+| `--bucket` | R2 bucket name (required) |
+| `--endpoint-url` | R2 S3-compatible endpoint URL (required) |
+| `--output-dir` | Local output directory to sync (default: `output`) |
+
 ## Development
 
 ```sh
