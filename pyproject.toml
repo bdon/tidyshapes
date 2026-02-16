@@ -1,0 +1,37 @@
+[project]
+name = "tidyshapes"
+version = "0.1.0"
+description = "Administrative boundary processing pipeline based on Overture Maps data"
+readme = "README.md"
+authors = [
+    { name = "bdon", email = "bdon@bdon.org" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "geopandas>=1.0",
+    "shapely>=2.0",
+    "pyarrow>=18.0",
+    "duckdb>=1.0",
+]
+
+[project.scripts]
+tidyshapes = "tidyshapes.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
