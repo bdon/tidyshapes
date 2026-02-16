@@ -5,6 +5,7 @@ import gzip
 import re
 import subprocess
 import sys
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -64,10 +65,12 @@ def load_qrank(path: Path) -> dict[str, int]:
 
 
 def slugify(text: str) -> str:
-    """Convert text to a URL-friendly slug."""
+    """Convert text to an ASCII-only URL-friendly slug."""
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
     text = text.lower().strip()
-    text = re.sub(r"[^\w\s-]", "", text)
-    text = re.sub(r"[\s_]+", "-", text)
+    text = re.sub(r"[^a-z0-9\s-]", "", text)
+    text = re.sub(r"[\s]+", "-", text)
     return re.sub(r"-+", "-", text).strip("-")
 
 
@@ -117,6 +120,8 @@ def cmd_build(args):
         minx, miny, maxx, maxy = geom.bounds
 
         slug = slugify(en_name)
+        if not slug:
+            continue
         bbox_path = output_dir / f"{slug}.bbox"
         bbox_path.write_text(f"{minx},{miny},{maxx},{maxy}\n")
         count += 1
