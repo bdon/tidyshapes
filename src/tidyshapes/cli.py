@@ -3,6 +3,7 @@
 import argparse
 import gzip
 import re
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -86,76 +87,6 @@ SUBTYPE_LABELS = {
     "macrohood": "macrohood",
     "microhood": "microhood",
 }
-
-INDEX_HTML = """\
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>tidyshapes</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css">
-<script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
-<style>
-body { margin: 0; font-family: system-ui, sans-serif; }
-#map { position: absolute; top: 0; bottom: 0; width: 100%; }
-#search { position: absolute; top: 10px; left: 10px; z-index: 1; }
-#q { padding: 8px 12px; width: 300px; font-size: 16px; border: 1px solid #ccc;
-     border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
-#results { background: white; max-height: 300px; overflow-y: auto; width: 324px;
-           border-radius: 0 0 4px 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); }
-#results div { padding: 6px 12px; cursor: pointer; font-size: 14px; }
-#results div:hover { background: #f0f0f0; }
-</style>
-</head>
-<body>
-<div id="search">
-  <input type="text" id="q" placeholder="Search places..." autocomplete="off">
-  <div id="results"></div>
-</div>
-<div id="map"></div>
-<script>
-let slugs = [];
-const map = new maplibregl.Map({
-  container: 'map',
-  style: 'https://demotiles.maplibre.org/style.json',
-  center: [0, 20], zoom: 2
-});
-map.on('load', () => {
-  map.addSource('bbox', {type:'geojson', data:{type:'FeatureCollection', features:[]}});
-  map.addLayer({id:'bbox-fill', type:'fill', source:'bbox',
-    paint:{'fill-color':'#0080ff','fill-opacity':0.15}});
-  map.addLayer({id:'bbox-line', type:'line', source:'bbox',
-    paint:{'line-color':'#0080ff','line-width':2}});
-});
-fetch('index.csv').then(r => r.text()).then(t => { slugs = t.trim().split('\\n'); });
-const input = document.getElementById('q');
-const results = document.getElementById('results');
-input.addEventListener('input', () => {
-  const q = input.value.toLowerCase();
-  results.innerHTML = '';
-  if (!q) return;
-  const matches = slugs.filter(s => s.startsWith(q)).slice(0, 20);
-  for (const slug of matches) {
-    const div = document.createElement('div');
-    div.textContent = slug;
-    div.onclick = () => select(slug);
-    results.appendChild(div);
-  }
-});
-async function select(slug) {
-  input.value = slug;
-  results.innerHTML = '';
-  const text = await fetch(slug + '.bbox').then(r => r.text());
-  const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
-  map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
-    coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
-  map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50});
-}
-</script>
-</body>
-</html>
-"""
-
 
 def load_areas(
     conn: duckdb.DuckDBPyConnection, division_path: Path, area_path: Path
@@ -266,7 +197,7 @@ def cmd_build(args):
 
     slugs.sort()
     (output_dir / "index.csv").write_text("\n".join(slugs) + "\n")
-    (output_dir / "index.html").write_text(INDEX_HTML)
+    shutil.copy(Path(__file__).parent / "index.html", output_dir / "index.html")
     print(f"Wrote {count} .bbox files + index.csv + index.html to {output_dir}/")
 
 
