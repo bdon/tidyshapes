@@ -145,20 +145,37 @@ listEl.addEventListener('click', (e) => {
   if (!actionEl) return;
   const row = actionEl.closest('.item');
   if (!row) return;
-  const action = actionEl.dataset.action;
-  if (action === 'bbox') selectBbox(row.dataset.slug, row);
+  selectAction(row.dataset.slug, row, actionEl.dataset.action);
 });
 
-async function selectBbox(slug, row) {
+async function selectAction(slug, row, action) {
   selected = slug;
   const prev = listEl.querySelector('.item.active');
   if (prev) prev.className = 'item';
   row.className = 'item active';
-  const text = await fetch(slug + '.bbox').then(r => r.text());
-  const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
-  map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
-    coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
-  map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
+  if (action === 'bbox') {
+    const text = await fetch(slug + '.bbox').then(r => r.text());
+    const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
+    map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
+      coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
+    map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
+  } else {
+    const geojson = await fetch(slug + '.' + action + '.geojson').then(r => r.json());
+    map.getSource('bbox').setData({type:'Feature', geometry: geojson});
+    const [minx, miny, maxx, maxy] = shapely_bounds(geojson.coordinates);
+    map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
+  }
+}
+
+function shapely_bounds(coords) {
+  let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  const stack = [coords];
+  while (stack.length) {
+    const c = stack.pop();
+    if (typeof c[0] === 'number') { minx = Math.min(minx,c[0]); miny = Math.min(miny,c[1]); maxx = Math.max(maxx,c[0]); maxy = Math.max(maxy,c[1]); }
+    else for (const item of c) stack.push(item);
+  }
+  return [minx, miny, maxx, maxy];
 }
 
 input.addEventListener('input', () => {
@@ -168,7 +185,7 @@ input.addEventListener('input', () => {
 input.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   const first = listEl.querySelector('.item');
-  if (first) selectBbox(first.dataset.slug, first);
+  if (first) selectAction(first.dataset.slug, first, '1k');
 });
 
 fetch('index.csv').then(r => r.text()).then(t => {

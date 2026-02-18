@@ -6,9 +6,11 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import unicodedata
 import urllib.request
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import duckdb
@@ -74,6 +76,25 @@ def slugify(text: str) -> str:
     text = re.sub(r"[^a-z0-9\s-]", "", text)
     text = re.sub(r"[\s]+", "-", text)
     return re.sub(r"-+", "-", text).strip("-")
+
+
+SIMPLIFY_TARGETS = {"1k": 1_000, "10k": 10_000}
+
+
+def simplify_to_target(geom, target):
+    """Binary search for a Douglas-Peucker tolerance that yields <= target vertices."""
+    n = shapely.get_num_coordinates(geom)
+    if n <= target:
+        return geom
+    minx, miny, maxx, maxy = geom.bounds
+    low, high = 0.0, max(maxx - minx, maxy - miny)
+    for _ in range(20):
+        mid = (low + high) / 2
+        if shapely.get_num_coordinates(shapely.simplify(geom, mid)) > target:
+            low = mid
+        else:
+            high = mid
+    return shapely.simplify(geom, high)
 
 
 SUBTYPE_LABELS = {
@@ -185,20 +206,53 @@ def cmd_build(args):
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    count = 0
-    slugs = []
-    for slug, (wikidata_id, geom_wkb) in slug_map.items():
+    def process_entry(slug, geom_wkb):
         geom = shapely.from_wkb(geom_wkb)
         minx, miny, maxx, maxy = geom.bounds
-        bbox_path = output_dir / f"{slug}.bbox"
-        bbox_path.write_text(f"{minx},{miny},{maxx},{maxy}\n")
-        slugs.append(slug)
-        count += 1
+        (output_dir / f"{slug}.bbox").write_text(f"{minx},{miny},{maxx},{maxy}\n")
+        gjcount = 0
+        warnings = []
+        for label, target in SIMPLIFY_TARGETS.items():
+            try:
+                simplified = simplify_to_target(geom, target)
+                if simplified.is_empty:
+                    warnings.append(f"{slug}.{label}.geojson simplified to empty, skipping")
+                    continue
+                (output_dir / f"{slug}.{label}.geojson").write_text(
+                    shapely.to_geojson(simplified)
+                )
+                gjcount += 1
+            except Exception as e:
+                warnings.append(f"{slug}.{label}.geojson failed: {e}")
+        return gjcount, warnings
+
+    total = len(slug_map)
+    geojson_count = 0
+    done = 0
+    lock = threading.Lock()
+    slugs = list(slug_map.keys())
+    print(f"Writing {total} entries:")
+
+    with ThreadPoolExecutor() as pool:
+        futures = {
+            pool.submit(process_entry, slug, geom_wkb): slug
+            for slug, (wikidata_id, geom_wkb) in slug_map.items()
+        }
+        for future in as_completed(futures):
+            gjcount, warnings = future.result()
+            with lock:
+                done += 1
+                geojson_count += gjcount
+                pct = done * 100 // total
+                print(f"\r  [{pct:3d}%] {done}/{total}", end="", flush=True)
+                for w in warnings:
+                    print(f"\n  Warning: {w}", end="")
+    print()
 
     slugs.sort()
     (output_dir / "index.csv").write_text("\n".join(slugs) + "\n")
     shutil.copy(Path(__file__).parent / "index.html", output_dir / "index.html")
-    print(f"Wrote {count} .bbox files + index.csv + index.html to {output_dir}/")
+    print(f"Wrote {total} .bbox + {geojson_count} .geojson files + index to {output_dir}/")
 
 
 def cmd_upload(args):
