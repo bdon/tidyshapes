@@ -278,6 +278,7 @@ def cmd_upload(args):
         args.output_dir,
         f"s3://{args.bucket}/{args.version}/",
         "--exclude", "index.html",
+        "--delete",
         *endpoint,
     ]
     print(f"Running: {' '.join(sync_cmd)}")
