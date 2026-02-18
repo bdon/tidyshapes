@@ -6,25 +6,68 @@
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.js"></script>
 <style>
-body { margin: 0; font-family: system-ui, sans-serif; }
-#map { position: absolute; top: 0; bottom: 0; width: 100%; }
-#search { position: absolute; top: 10px; left: 10px; z-index: 1; }
-#q { padding: 8px 12px; width: 300px; font-size: 16px; border: 1px solid #ccc;
-     border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
-#results { background: white; max-height: 300px; overflow-y: auto; width: 324px;
-           border-radius: 0 0 4px 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.15); }
-#results div { padding: 6px 12px; cursor: pointer; font-size: 14px; }
-#results div:hover { background: #f0f0f0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; }
+#sidebar {
+  width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid #e0e0e0; background: #fff;
+}
+#sidebar header {
+  padding: 16px; border-bottom: 1px solid #e0e0e0;
+}
+#sidebar header h1 {
+  font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+  text-transform: lowercase; color: #000; margin-bottom: 12px;
+}
+#q {
+  width: 100%; padding: 7px 0; font-size: 13px; font-family: inherit;
+  border: none; border-bottom: 1px solid #d0d0d0; outline: none;
+  background: transparent; color: #000;
+}
+#q::placeholder { color: #aaa; }
+#q:focus { border-bottom-color: #000; }
+#count {
+  padding: 8px 16px; font-size: 11px; color: #999;
+  border-bottom: 1px solid #e0e0e0; flex-shrink: 0;
+}
+#list {
+  flex: 1; overflow-y: auto;
+}
+.item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 16px; border-bottom: 1px solid #f0f0f0;
+  font-size: 13px; color: #333;
+}
+.item .name {
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.item .action {
+  color: #bbb; font-size: 11px; cursor: pointer; flex-shrink: 0;
+  margin-left: 12px; letter-spacing: 0.03em;
+  transition: color 0.15s;
+}
+.item .action:hover { color: #000; }
+.item.active { background: #f7f7f7; }
+.item.active .name { color: #000; font-weight: 500; }
+.item.active .action { color: #000; }
+#map { flex: 1; }
 </style>
 </head>
 <body>
-<div id="search">
-  <input type="text" id="q" placeholder="Search places..." autocomplete="off">
-  <div id="results"></div>
+<div id="sidebar">
+  <header>
+    <h1>tidyshapes</h1>
+    <input type="text" id="q" placeholder="filter" autocomplete="off" spellcheck="false">
+  </header>
+  <div id="count"></div>
+  <div id="list"></div>
 </div>
 <div id="map"></div>
 <script>
 let slugs = [];
+let selected = null;
+const base = location.hash.slice(1) || '.';
+
 const map = new maplibregl.Map({
   container: 'map',
   style: 'https://demotiles.maplibre.org/style.json',
@@ -33,34 +76,51 @@ const map = new maplibregl.Map({
 map.on('load', () => {
   map.addSource('bbox', {type:'geojson', data:{type:'FeatureCollection', features:[]}});
   map.addLayer({id:'bbox-fill', type:'fill', source:'bbox',
-    paint:{'fill-color':'#0080ff','fill-opacity':0.15}});
+    paint:{'fill-color':'#000','fill-opacity':0.06}});
   map.addLayer({id:'bbox-line', type:'line', source:'bbox',
-    paint:{'line-color':'#0080ff','line-width':2}});
+    paint:{'line-color':'#000','line-width':1.5}});
 });
-fetch('index.csv').then(r => r.text()).then(t => { slugs = t.trim().split('\n'); });
+
+const listEl = document.getElementById('list');
+const countEl = document.getElementById('count');
 const input = document.getElementById('q');
-const results = document.getElementById('results');
-input.addEventListener('input', () => {
-  const q = input.value.toLowerCase().replace(/\s+/g, '-');
-  results.innerHTML = '';
-  if (!q) return;
-  const matches = slugs.filter(s => s.startsWith(q)).slice(0, 20);
-  for (const slug of matches) {
-    const div = document.createElement('div');
-    div.textContent = slug;
-    div.onclick = () => select(slug);
-    results.appendChild(div);
+
+function render(filtered) {
+  countEl.textContent = filtered.length.toLocaleString() + ' entries';
+  listEl.innerHTML = '';
+  for (const slug of filtered) {
+    const row = document.createElement('div');
+    row.className = 'item' + (slug === selected ? ' active' : '');
+    row.innerHTML = '<span class="name"></span><span class="action">bbox</span>';
+    row.querySelector('.name').textContent = slug;
+    row.querySelector('.action').onclick = (e) => { e.stopPropagation(); select(slug, row); };
+    listEl.appendChild(row);
   }
-});
-async function select(slug) {
-  input.value = slug;
-  results.innerHTML = '';
-  const text = await fetch(slug + '.bbox').then(r => r.text());
+}
+
+function filter() {
+  const q = input.value.toLowerCase().replace(/\s+/g, '-');
+  const filtered = q ? slugs.filter(s => s.startsWith(q)) : slugs;
+  render(filtered);
+}
+
+async function select(slug, row) {
+  selected = slug;
+  document.querySelectorAll('.item.active').forEach(el => el.classList.remove('active'));
+  row.classList.add('active');
+  const text = await fetch(base + '/' + slug + '.bbox').then(r => r.text());
   const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
   map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
     coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
   map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50});
 }
+
+input.addEventListener('input', filter);
+
+fetch(base + '/index.csv').then(r => r.text()).then(t => {
+  slugs = t.trim().split('\n');
+  render(slugs);
+});
 </script>
 </body>
 </html>

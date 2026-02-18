@@ -203,14 +203,30 @@ def cmd_build(args):
 
 def cmd_upload(args):
     """Upload output files to R2."""
-    cmd = [
+    endpoint = ["--endpoint-url", args.endpoint_url]
+
+    # Sync bbox + index.csv to versioned prefix, excluding index.html
+    sync_cmd = [
         "aws", "s3", "sync",
         args.output_dir,
         f"s3://{args.bucket}/{args.version}/",
-        "--endpoint-url", args.endpoint_url,
+        "--exclude", "index.html",
+        *endpoint,
     ]
-    print(f"Running: {' '.join(cmd)}")
-    sys.exit(subprocess.call(cmd))
+    print(f"Running: {' '.join(sync_cmd)}")
+    rc = subprocess.call(sync_cmd)
+    if rc != 0:
+        sys.exit(rc)
+
+    # Copy index.html to bucket root
+    cp_cmd = [
+        "aws", "s3", "cp",
+        str(Path(args.output_dir) / "index.html"),
+        f"s3://{args.bucket}/index.html",
+        *endpoint,
+    ]
+    print(f"Running: {' '.join(cp_cmd)}")
+    sys.exit(subprocess.call(cp_cmd))
 
 
 def main():
