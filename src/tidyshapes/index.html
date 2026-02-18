@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>tidyshapes</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css">
-<script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.js"></script>
 <style>
 body { margin: 0; font-family: system-ui, sans-serif; }
 #map { position: absolute; top: 0; bottom: 0; width: 100%; }
@@ -41,7 +41,7 @@ fetch('index.csv').then(r => r.text()).then(t => { slugs = t.trim().split('\n');
 const input = document.getElementById('q');
 const results = document.getElementById('results');
 input.addEventListener('input', () => {
-  const q = input.value.toLowerCase();
+  const q = input.value.toLowerCase().replace(/\s+/g, '-');
   results.innerHTML = '';
   if (!q) return;
   const matches = slugs.filter(s => s.startsWith(q)).slice(0, 20);
