@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import unicodedata
 import urllib.request
@@ -66,6 +67,17 @@ def load_qrank(path: Path) -> dict[str, int]:
             qrank[entity] = int(score)
     print(f"  {len(qrank):,} QRank entries loaded")
     return qrank
+
+
+def write_if_changed(path: Path, content: str) -> bool:
+    """Write content to path only if it differs from existing file."""
+    try:
+        if path.read_text() == content:
+            return False
+    except FileNotFoundError:
+        pass
+    path.write_text(content)
+    return True
 
 
 def slugify(text: str) -> str:
@@ -209,7 +221,7 @@ def cmd_build(args):
     def process_entry(slug, geom_wkb):
         geom = shapely.from_wkb(geom_wkb)
         minx, miny, maxx, maxy = geom.bounds
-        (output_dir / f"{slug}.bbox").write_text(f"{minx},{miny},{maxx},{maxy}\n")
+        write_if_changed(output_dir / f"{slug}.bbox", f"{minx},{miny},{maxx},{maxy}\n")
         gjcount = 0
         warnings = []
         for label, target in SIMPLIFY_TARGETS.items():
@@ -218,8 +230,9 @@ def cmd_build(args):
                 if simplified.is_empty:
                     warnings.append(f"{slug}.{label}.geojson simplified to empty, skipping")
                     continue
-                (output_dir / f"{slug}.{label}.geojson").write_text(
-                    shapely.to_geojson(simplified)
+                write_if_changed(
+                    output_dir / f"{slug}.{label}.geojson",
+                    shapely.to_geojson(simplified),
                 )
                 gjcount += 1
             except Exception as e:
@@ -250,21 +263,46 @@ def cmd_build(args):
     print()
 
     slugs.sort()
-    (output_dir / "index.csv").write_text("\n".join(slugs) + "\n")
+    write_if_changed(output_dir / "index.csv", "\n".join(slugs) + "\n")
     shutil.copy(Path(__file__).parent / "index.html", output_dir / "index.html")
     print(f"Wrote {total} .bbox + {geojson_count} .geojson files + index to {output_dir}/")
 
 
 def cmd_upload(args):
     """Upload output files to R2."""
-    cmd = [
+    endpoint = ["--endpoint-url", args.endpoint_url]
+
+    # Sync data files to versioned prefix, skipping unchanged files
+    sync_cmd = [
         "aws", "s3", "sync",
         args.output_dir,
         f"s3://{args.bucket}/{args.version}/",
-        "--endpoint-url", args.endpoint_url,
+        "--exclude", "index.html",
+        *endpoint,
     ]
-    print(f"Running: {' '.join(cmd)}")
-    sys.exit(subprocess.call(cmd))
+    print(f"Running: {' '.join(sync_cmd)}")
+    rc = subprocess.call(sync_cmd)
+    if rc != 0:
+        sys.exit(rc)
+
+    # Write index.html to bucket root with BASE pointing to the version
+    index_src = Path(args.output_dir) / "index.html"
+    index_content = index_src.read_text().replace(
+        "const BASE = '.';", f"const BASE = '{args.version}';"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
+        f.write(index_content)
+        tmp_path = f.name
+    cp_cmd = [
+        "aws", "s3", "cp", tmp_path,
+        f"s3://{args.bucket}/index.html",
+        "--content-type", "text/html",
+        *endpoint,
+    ]
+    print(f"Running: {' '.join(cp_cmd)}")
+    rc = subprocess.call(cp_cmd)
+    Path(tmp_path).unlink()
+    sys.exit(rc)
 
 
 def main():

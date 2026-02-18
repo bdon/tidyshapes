@@ -83,6 +83,7 @@ body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; display
 </div>
 <div id="map"></div>
 <script>
+const BASE = '.';
 const API_KEY = 'a31ac650e89b2a1d';
 const VISIBLE_LIMIT = 200;
 let slugs = [];
@@ -154,13 +155,13 @@ async function selectAction(slug, row, action) {
   if (prev) prev.className = 'item';
   row.className = 'item active';
   if (action === 'bbox') {
-    const text = await fetch(slug + '.bbox').then(r => r.text());
+    const text = await fetch(BASE + '/' + slug + '.bbox').then(r => r.text());
     const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
     map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
       coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
     map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
   } else {
-    const geojson = await fetch(slug + '.' + action + '.geojson').then(r => r.json());
+    const geojson = await fetch(BASE + '/' + slug + '.' + action + '.geojson').then(r => r.json());
     map.getSource('bbox').setData({type:'Feature', geometry: geojson});
     const [minx, miny, maxx, maxy] = shapely_bounds(geojson.coordinates);
     map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
@@ -188,7 +189,7 @@ input.addEventListener('keydown', (e) => {
   if (first) selectAction(first.dataset.slug, first, '1k');
 });
 
-fetch('index.csv').then(r => r.text()).then(t => {
+fetch(BASE + '/index.csv').then(r => r.text()).then(t => {
   slugs = t.trim().split('\n');
   render(slugs);
 });
