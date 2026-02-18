@@ -153,8 +153,8 @@ def dedup_by_wikidata(rows, qrank, threshold):
     return list(best.values())
 
 
-def resolve_collisions(entries):
-    """Assign unique slugs, disambiguating collisions by subtype then parent name."""
+def resolve_collisions(entries, qrank):
+    """Assign unique slugs. Highest QRank keeps the bare slug; others get suffixed."""
     by_slug = defaultdict(list)
     for e in entries:
         slug = slugify(e[2])  # en_name
@@ -164,31 +164,27 @@ def resolve_collisions(entries):
     result = {}  # slug -> (wikidata_id, geom_wkb)
     for base_slug, group in by_slug.items():
         if len(group) == 1:
-            e = group[0]
-            result[base_slug] = (e[0], e[4])
+            result[base_slug] = (group[0][0], group[0][4])
             continue
 
-        # Try disambiguating by subtype
-        subtypes = {e[1] for e in group}
-        if len(subtypes) == len(group):
-            for e in group:
-                label = SUBTYPE_LABELS.get(e[1], e[1])
-                result[f"{base_slug}-{label}"] = (e[0], e[4])
-            continue
+        # Highest QRank keeps the bare slug
+        group.sort(key=lambda e: qrank.get(e[0], 0), reverse=True)
+        result[base_slug] = (group[0][0], group[0][4])
 
-        # Same subtype or mixed — append parent name
-        attempted = {}
-        for e in group:
+        # Disambiguate the rest: try subtype, then parent name, then QID
+        for e in group[1:]:
+            label = SUBTYPE_LABELS.get(e[1], e[1])
+            candidate = f"{base_slug}-{label}"
+            if candidate not in result:
+                result[candidate] = (e[0], e[4])
+                continue
             parent_slug = slugify(e[3]) if e[3] else ""
             if parent_slug:
                 candidate = f"{base_slug}-{parent_slug}"
-            else:
-                candidate = f"{base_slug}-{e[0].lower()}"  # QID fallback
-            # If parent also collides, fall back to QID
-            if candidate in attempted or candidate in result:
-                candidate = f"{base_slug}-{e[0].lower()}"
-            attempted[candidate] = (e[0], e[4])
-        result.update(attempted)
+                if candidate not in result:
+                    result[candidate] = (e[0], e[4])
+                    continue
+            result[f"{base_slug}-{e[0].lower()}"] = (e[0], e[4])
 
     return result
 
@@ -213,7 +209,7 @@ def cmd_build(args):
     entries = dedup_by_wikidata(rows, qrank, args.qrank_threshold)
 
     print("Resolving name collisions:")
-    slug_map = resolve_collisions(entries)
+    slug_map = resolve_collisions(entries, qrank)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
