@@ -6,51 +6,70 @@
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.css">
 <script src="https://unpkg.com/maplibre-gl@5.18.0/dist/maplibre-gl.js"></script>
 <style>
+:root {
+  --bg: #fff; --fg: #333; --fg-strong: #000;
+  --border: #e0e0e0; --border-subtle: #f0f0f0;
+  --muted: #999; --action: #bbb; --active-bg: #f7f7f7;
+  --placeholder: #aaa; --input-border: #d0d0d0;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #1a1a1a; --fg: #aaa; --fg-strong: #ddd;
+  --border: #2e2e2e; --border-subtle: #252525;
+  --muted: #666; --action: #555; --active-bg: #242424;
+  --placeholder: #555; --input-border: #444;
+}}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; display: flex; }
 #sidebar {
-  width: 320px; flex-shrink: 0; display: flex; flex-direction: column;
-  border-right: 1px solid #e0e0e0; background: #fff;
+  width: 360px; flex-shrink: 0; display: flex; flex-direction: column;
+  border-right: 1px solid var(--border); background: var(--bg);
 }
-#sidebar header {
-  padding: 16px; border-bottom: 1px solid #e0e0e0;
-}
+#sidebar header { padding: 16px; border-bottom: 1px solid var(--border); }
 #sidebar header h1 {
   font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
-  text-transform: lowercase; color: #000; margin-bottom: 12px;
+  text-transform: lowercase; color: var(--fg-strong); margin-bottom: 12px;
 }
 #q {
   width: 100%; padding: 7px 0; font-size: 13px; font-family: inherit;
-  border: none; border-bottom: 1px solid #d0d0d0; outline: none;
-  background: transparent; color: #000;
+  border: none; border-bottom: 1px solid var(--input-border); outline: none;
+  background: transparent; color: var(--fg-strong);
 }
-#q::placeholder { color: #aaa; }
-#q:focus { border-bottom-color: #000; }
+#q::placeholder { color: var(--placeholder); }
+#q:focus { border-bottom-color: var(--fg-strong); }
 #count {
-  padding: 8px 16px; font-size: 11px; color: #999;
-  border-bottom: 1px solid #e0e0e0; flex-shrink: 0;
+  padding: 8px 16px; font-size: 11px; color: var(--muted);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-#list {
-  flex: 1; overflow-y: auto;
-}
+#list { flex: 1; overflow-y: auto; }
 .item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 7px 16px; border-bottom: 1px solid #f0f0f0;
-  font-size: 13px; color: #333;
+  display: flex; align-items: center;
+  padding: 7px 16px; border-bottom: 1px solid var(--border-subtle);
+  font-size: 13px; color: var(--fg);
 }
-.item .name {
-  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .actions {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0; margin-left: 12px; font-size: 11px; letter-spacing: 0.03em;
 }
-.item .action {
-  color: #bbb; font-size: 11px; cursor: pointer; flex-shrink: 0;
-  margin-left: 12px; letter-spacing: 0.03em;
-  transition: color 0.15s;
+.item .actions .sep {
+  width: 1px; height: 10px; background: var(--border);
 }
-.item .action:hover { color: #000; }
-.item.active { background: #f7f7f7; }
-.item.active .name { color: #000; font-weight: 500; }
-.item.active .action { color: #000; }
+.item .actions span[data-action] {
+  color: var(--action); cursor: pointer; transition: color 0.15s;
+}
+.item .actions span[data-action]:hover { color: var(--fg-strong); }
+.item.active { background: var(--active-bg); }
+.item.active .name { color: var(--fg-strong); font-weight: 500; }
+.item.active .actions span[data-action] { color: var(--muted); }
+.item.active .actions span[data-action]:hover { color: var(--fg-strong); }
 #map { flex: 1; }
+.maplibregl-ctrl-attrib {
+  background: transparent !important; font-size: 11px !important;
+}
+.maplibregl-ctrl-attrib, .maplibregl-ctrl-attrib a {
+  color: var(--muted) !important;
+}
+.maplibregl-ctrl-attrib a:hover { color: var(--fg-strong) !important; }
 </style>
 </head>
 <body>
@@ -64,21 +83,29 @@ body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; display
 </div>
 <div id="map"></div>
 <script>
+const API_KEY = 'a31ac650e89b2a1d';
+const VISIBLE_LIMIT = 200;
 let slugs = [];
 let selected = null;
-const base = location.hash.slice(1) || '.';
+let debounceTimer;
+const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+const bboxColor = dark ? '#fff' : '#000';
 
 const map = new maplibregl.Map({
   container: 'map',
-  style: 'https://demotiles.maplibre.org/style.json',
-  center: [0, 20], zoom: 2
+  style: 'https://api.protomaps.com/styles/v5/' + (dark ? 'black' : 'white') + '/en.json?key=' + API_KEY,
+  center: [0, 20], zoom: 2,
+  attributionControl: false
 });
+map.addControl(new maplibregl.AttributionControl({compact: false,
+  customAttribution: '<a href="https://overturemaps.org">Overture Maps Foundation</a>'
+}));
 map.on('load', () => {
   map.addSource('bbox', {type:'geojson', data:{type:'FeatureCollection', features:[]}});
   map.addLayer({id:'bbox-fill', type:'fill', source:'bbox',
-    paint:{'fill-color':'#000','fill-opacity':0.06}});
+    paint:{'fill-color':bboxColor,'fill-opacity':0.06}});
   map.addLayer({id:'bbox-line', type:'line', source:'bbox',
-    paint:{'line-color':'#000','line-width':1.5}});
+    paint:{'line-color':bboxColor,'line-width':1.5}});
 });
 
 const listEl = document.getElementById('list');
@@ -86,16 +113,25 @@ const countEl = document.getElementById('count');
 const input = document.getElementById('q');
 
 function render(filtered) {
-  countEl.textContent = filtered.length.toLocaleString() + ' entries';
-  listEl.innerHTML = '';
-  for (const slug of filtered) {
-    const row = document.createElement('div');
-    row.className = 'item' + (slug === selected ? ' active' : '');
-    row.innerHTML = '<span class="name"></span><span class="action">bbox</span>';
-    row.querySelector('.name').textContent = slug;
-    row.querySelector('.action').onclick = (e) => { e.stopPropagation(); select(slug, row); };
-    listEl.appendChild(row);
+  const total = filtered.length;
+  const shown = Math.min(total, VISIBLE_LIMIT);
+  countEl.textContent = shown < total
+    ? shown.toLocaleString() + ' of ' + total.toLocaleString() + ' entries'
+    : total.toLocaleString() + ' entries';
+  const parts = [];
+  for (let i = 0; i < shown; i++) {
+    const slug = filtered[i];
+    const cls = slug === selected ? 'item active' : 'item';
+    parts.push('<div class="' + cls + '" data-slug="' + slug + '">'
+      + '<span class="name">' + slug + '</span>'
+      + '<span class="actions">'
+      + '<span data-action="1k">1k</span>'
+      + '<span data-action="10k">10k</span>'
+      + '<span class="sep"></span>'
+      + '<span data-action="bbox">bbox</span>'
+      + '</span></div>');
   }
+  listEl.innerHTML = parts.join('');
 }
 
 function filter() {
@@ -104,20 +140,38 @@ function filter() {
   render(filtered);
 }
 
-async function select(slug, row) {
+listEl.addEventListener('click', (e) => {
+  const actionEl = e.target.closest('[data-action]');
+  if (!actionEl) return;
+  const row = actionEl.closest('.item');
+  if (!row) return;
+  const action = actionEl.dataset.action;
+  if (action === 'bbox') selectBbox(row.dataset.slug, row);
+});
+
+async function selectBbox(slug, row) {
   selected = slug;
-  document.querySelectorAll('.item.active').forEach(el => el.classList.remove('active'));
-  row.classList.add('active');
-  const text = await fetch(base + '/' + slug + '.bbox').then(r => r.text());
+  const prev = listEl.querySelector('.item.active');
+  if (prev) prev.className = 'item';
+  row.className = 'item active';
+  const text = await fetch(slug + '.bbox').then(r => r.text());
   const [minx, miny, maxx, maxy] = text.trim().split(',').map(Number);
   map.getSource('bbox').setData({type:'Feature', geometry:{type:'Polygon',
     coordinates:[[[minx,miny],[maxx,miny],[maxx,maxy],[minx,maxy],[minx,miny]]]}});
-  map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50});
+  map.fitBounds([[minx, miny], [maxx, maxy]], {padding: 50, animate: false});
 }
 
-input.addEventListener('input', filter);
+input.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(filter, 80);
+});
+input.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const first = listEl.querySelector('.item');
+  if (first) selectBbox(first.dataset.slug, first);
+});
 
-fetch(base + '/index.csv').then(r => r.text()).then(t => {
+fetch('index.csv').then(r => r.text()).then(t => {
   slugs = t.trim().split('\n');
   render(slugs);
 });
